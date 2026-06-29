@@ -23,18 +23,19 @@ func run(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: mewcode ask <message> | mewcode chat")
 	}
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+	loadDotEnv(".env")
+	apiKey := os.Getenv("STONEAI_API_KEY")
 	if apiKey == "" {
-		return fmt.Errorf("DEEPSEEK_API_KEY is not set")
+		return fmt.Errorf("STONEAI_API_KEY is not set")
 	}
 
 	provider := config.Provider{
-		Name:      "deepseek",
+		Name:      "stoneai",
 		Protocol:  "deepseek",
-		Model:     getenvDefault("DEEPSEEK_MODEL", "deepseek-chat"),
+		Model:     getenvDefault("STONEAI_MODEL", "claude-opus-4-8"),
 		APIKey:    apiKey,
-		BaseURL:   getenvDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-		MaxTokens: 2048,
+		BaseURL:   getenvDefault("STONEAI_BASE_URL", "https://www.stoneai.fun/v1"),
+		MaxTokens: getenvIntDefault("STONEAI_MAX_TOKENS", 0),
 	}
 	client, err := llm.NewClient(&provider, "You are a concise coding assistant.")
 	if err != nil {
@@ -62,7 +63,7 @@ func askOnce(client llm.Client, conv *conversation.Manager, prompt string) error
 
 func chatLoop(client llm.Client, conv *conversation.Manager) error {
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("DeepSeek chat ready. Type /exit to quit.")
+	fmt.Println("StoneAI Claude chat ready. Type /exit to quit.")
 	for {
 		fmt.Print("> ")
 		if !scanner.Scan() {
@@ -75,10 +76,13 @@ func chatLoop(client llm.Client, conv *conversation.Manager) error {
 		if prompt == "/exit" || prompt == "/quit" {
 			return nil
 		}
+		checkpoint := conv.Len()
 		conv.AddUser(prompt)
 		fmt.Print("assistant: ")
 		if err := streamAssistant(client, conv); err != nil {
-			return err
+			conv.Truncate(checkpoint)
+			fmt.Printf("\nerror: %v\n", err)
+			continue
 		}
 	}
 	return scanner.Err()
@@ -113,4 +117,39 @@ func getenvDefault(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func getenvIntDefault(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func loadDotEnv(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key == "" || os.Getenv(key) != "" {
+			continue
+		}
+		_ = os.Setenv(key, value)
+	}
 }

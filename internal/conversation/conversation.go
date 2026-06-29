@@ -104,6 +104,20 @@ func (m *Manager) GetMessages() []Message {
 	return out
 }
 
+func (m *Manager) Len() int {
+	return len(m.history)
+}
+
+func (m *Manager) Truncate(length int) {
+	if length < 0 {
+		length = 0
+	}
+	if length > len(m.history) {
+		return
+	}
+	m.history = m.history[:length]
+}
+
 func (m *Manager) Serialize(protocol string) ([]SerializedMessage, error) {
 	switch protocol {
 	case "anthropic":

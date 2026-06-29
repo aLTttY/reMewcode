@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -173,6 +174,7 @@ func classifyOpenAIError(err error) error {
 				RetryAfter: parseRetryAfter(httpErr.Headers.Get("Retry-After")),
 			}
 		}
+		return &LLMError{Message: fmt.Sprintf("HTTP %d %s: %s", httpErr.StatusCode, http.StatusText(httpErr.StatusCode), message)}
 	}
 	return &LLMError{Message: err.Error(), Err: err}
 }

@@ -33,6 +33,7 @@ type deepSeekRequest struct {
 	Messages      []deepSeekMessage `json:"messages"`
 	Stream        bool              `json:"stream"`
 	MaxTokens     int               `json:"max_tokens,omitempty"`
+	Temperature   float64           `json:"temperature,omitempty"`
 	Tools         []map[string]any  `json:"tools,omitempty"`
 	StreamOptions map[string]bool   `json:"stream_options,omitempty"`
 }
@@ -128,16 +129,19 @@ func (c *deepSeekClient) Stream(ctx context.Context, conv *conversation.Manager,
 }
 
 func (c *deepSeekClient) buildRequest(conv *conversation.Manager, tools []map[string]any) (deepSeekRequest, error) {
-	messages, err := buildDeepSeekMessages(conv, c.systemPrompt)
+	messages, err := buildDeepSeekMessages(conv, c.systemPrompt, c.historyLimit())
 	if err != nil {
 		return deepSeekRequest{}, err
 	}
 	req := deepSeekRequest{
-		Model:         c.provider.Model,
-		Messages:      messages,
-		Stream:        true,
-		Tools:         tools,
-		StreamOptions: map[string]bool{"include_usage": true},
+		Model:       c.provider.Model,
+		Messages:    messages,
+		Stream:      true,
+		Temperature: envFloat("STONEAI_TEMPERATURE", 0.7),
+		Tools:       tools,
+	}
+	if c.provider.Name != "stoneai" {
+		req.StreamOptions = map[string]bool{"include_usage": true}
 	}
 	if c.provider.MaxTokens > 0 {
 		req.MaxTokens = c.provider.MaxTokens
@@ -145,14 +149,25 @@ func (c *deepSeekClient) buildRequest(conv *conversation.Manager, tools []map[st
 	return req, nil
 }
 
+func (c *deepSeekClient) historyLimit() int {
+	fallback := 0
+	if c.provider.Name == "stoneai" {
+		fallback = 1
+	}
+	return envInt("STONEAI_HISTORY_MESSAGES", fallback)
+}
+
 func (c *deepSeekClient) apiKey() string {
 	if c.provider.APIKey != "" {
 		return c.provider.APIKey
 	}
+	if value := os.Getenv("STONEAI_API_KEY"); value != "" {
+		return value
+	}
 	return os.Getenv("DEEPSEEK_API_KEY")
 }
 
-func buildDeepSeekMessages(conv *conversation.Manager, systemPrompt string) ([]deepSeekMessage, error) {
+func buildDeepSeekMessages(conv *conversation.Manager, systemPrompt string, historyLimit int) ([]deepSeekMessage, error) {
 	if conv == nil {
 		return nil, errors.New("conversation manager is nil")
 	}
@@ -164,7 +179,11 @@ func buildDeepSeekMessages(conv *conversation.Manager, systemPrompt string) ([]d
 	if systemPrompt != "" {
 		messages = append(messages, deepSeekMessage{Role: "system", Content: systemPrompt})
 	}
-	for _, msg := range serialized {
+	start := 0
+	if historyLimit > 0 && len(serialized) > historyLimit {
+		start = len(serialized) - historyLimit
+	}
+	for _, msg := range serialized[start:] {
 		content := msg.Content
 		for _, result := range msg.ToolResults {
 			content += result.Content
@@ -252,6 +271,9 @@ func classifyDeepSeekHTTPError(resp *http.Response) error {
 	message := strings.TrimSpace(string(payload))
 	if message == "" {
 		message = fmt.Sprintf("deepseek returned HTTP %d", resp.StatusCode)
+	}
+	if resp.Request != nil && resp.Request.URL != nil {
+		appendMewcodeLog("chat completions HTTP error: url=%s status=%d body=%s", resp.Request.URL.String(), resp.StatusCode, message)
 	}
 	return classifyOpenAIError(&httpStatusError{
 		StatusCode: resp.StatusCode,

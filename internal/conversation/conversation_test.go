@@ -38,3 +38,20 @@ func TestSerializeAnthropicMergesAdjacentText(t *testing.T) {
 		t.Fatal("thinking signature was not preserved")
 	}
 }
+
+func TestTruncateRestoresHistoryLength(t *testing.T) {
+	conv := NewManager()
+	conv.AddUser("kept")
+	checkpoint := conv.Len()
+	conv.AddUser("failed")
+
+	conv.Truncate(checkpoint)
+
+	messages := conv.GetMessages()
+	if len(messages) != 1 {
+		t.Fatalf("messages len = %d, want 1", len(messages))
+	}
+	if messages[0].Content != "kept" {
+		t.Fatalf("remaining content = %q, want kept", messages[0].Content)
+	}
+}
