@@ -32,7 +32,7 @@ func run(args []string) error {
 	provider := config.Provider{
 		Name:      "stoneai",
 		Protocol:  "deepseek",
-		Model:     getenvDefault("STONEAI_MODEL", "claude-opus-4-8"),
+		Model:     getenvDefault("STONEAI_MODEL", "claude-opus-4-7"),
 		APIKey:    apiKey,
 		BaseURL:   getenvDefault("STONEAI_BASE_URL", "https://www.stoneai.fun/v1"),
 		MaxTokens: getenvIntDefault("STONEAI_MAX_TOKENS", 0),
