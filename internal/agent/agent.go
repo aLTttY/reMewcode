@@ -26,7 +26,7 @@ func (a *Agent) RunOnce(ctx context.Context, conv *conversation.Manager) error {
 	}
 	var toolSchemas []map[string]any
 	if a.Tools != nil {
-		toolSchemas = a.Tools.Schemas()
+		toolSchemas = a.Tools.Schemas(a.Protocol)
 	}
 
 	events, errs := a.Client.Stream(ctx, conv, toolSchemas)
@@ -69,7 +69,30 @@ func (a *Agent) RunOnce(ctx context.Context, conv *conversation.Manager) error {
 	if err := <-errs; err != nil {
 		return handleStreamError(err)
 	}
+	if len(toolUses) > 0 {
+		conv.AddToolResults(a.executeToolUses(ctx, toolUses))
+	}
 	return nil
+}
+
+func (a *Agent) executeToolUses(ctx context.Context, toolUses []conversation.ToolUseBlock) []conversation.ToolResultBlock {
+	results := make([]conversation.ToolResultBlock, 0, len(toolUses))
+	for _, toolUse := range toolUses {
+		result := tools.ToolResult{
+			Tool:  toolUse.Name,
+			OK:    false,
+			Error: "tool registry is nil",
+		}
+		if a.Tools != nil {
+			result = a.Tools.Execute(ctx, toolUse.Name, toolUse.Arguments)
+		}
+		results = append(results, conversation.ToolResultBlock{
+			ToolUseID: toolUse.ID,
+			Content:   result.JSON(),
+			IsError:   !result.OK,
+		})
+	}
+	return results
 }
 
 func handleStreamError(err error) error {

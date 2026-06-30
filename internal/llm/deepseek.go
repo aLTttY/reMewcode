@@ -44,6 +44,7 @@ type deepSeekChunk struct {
 			Content          string `json:"content"`
 			ReasoningContent string `json:"reasoning_content"`
 			ToolCalls        []struct {
+				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Type     string `json:"type"`
 				Function struct {
@@ -202,6 +203,10 @@ func readDeepSeekSSE(ctx context.Context, body io.Reader, events chan<- StreamEv
 	var thinking strings.Builder
 	var stopReason string
 	var usage UsageInfo
+	toolIDs := map[int]string{}
+	toolNames := map[int]string{}
+	toolInputs := map[int]string{}
+	toolStarted := map[int]bool{}
 
 	for scanner.Scan() {
 		select {
@@ -218,6 +223,9 @@ func readDeepSeekSSE(ctx context.Context, body io.Reader, events chan<- StreamEv
 		if data == "[DONE]" {
 			if thinking.Len() > 0 {
 				events <- ThinkingComplete{Text: thinking.String()}
+			}
+			if err := completeDeepSeekTools(toolIDs, toolNames, toolInputs, events); err != nil {
+				return err
 			}
 			if stopReason == "" {
 				stopReason = "stop"
@@ -249,11 +257,18 @@ func readDeepSeekSSE(ctx context.Context, body io.Reader, events chan<- StreamEv
 				events <- TextDelta{Text: choice.Delta.Content}
 			}
 			for _, toolCall := range choice.Delta.ToolCalls {
+				index := toolCall.Index
 				if toolCall.ID != "" && toolCall.Function.Name != "" {
-					events <- ToolCallStart{ID: toolCall.ID, Name: toolCall.Function.Name}
+					toolIDs[index] = toolCall.ID
+					toolNames[index] = toolCall.Function.Name
 				}
-				if toolCall.ID != "" && toolCall.Function.Arguments != "" {
-					events <- ToolCallDelta{ID: toolCall.ID, Delta: toolCall.Function.Arguments}
+				if toolCall.ID != "" && !toolStarted[index] {
+					events <- ToolCallStart{ID: toolCall.ID, Name: toolCall.Function.Name}
+					toolStarted[index] = true
+				}
+				if toolCall.Function.Arguments != "" {
+					toolInputs[index] += toolCall.Function.Arguments
+					events <- ToolCallDelta{ID: toolIDs[index], Delta: toolCall.Function.Arguments}
 				}
 			}
 		}
@@ -262,7 +277,26 @@ func readDeepSeekSSE(ctx context.Context, body io.Reader, events chan<- StreamEv
 	if err := scanner.Err(); err != nil {
 		return &NetworkError{LLMError: LLMError{Message: "read deepseek stream", Err: err}}
 	}
+	if err := completeDeepSeekTools(toolIDs, toolNames, toolInputs, events); err != nil {
+		return err
+	}
 	events <- StreamEnd{StopReason: "stop", Usage: usage}
+	return nil
+}
+
+func completeDeepSeekTools(toolIDs, toolNames map[int]string, toolInputs map[int]string, events chan<- StreamEvent) error {
+	for index, input := range toolInputs {
+		id := toolIDs[index]
+		if id == "" || input == "" {
+			continue
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(input), &args); err != nil {
+			return &LLMError{Message: "decode deepseek tool arguments", Err: err}
+		}
+		events <- ToolCallComplete{ID: id, Name: toolNames[index], Arguments: args}
+		delete(toolInputs, index)
+	}
 	return nil
 }
 
